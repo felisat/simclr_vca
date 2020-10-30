@@ -7,9 +7,10 @@ import torch.optim as optim
 from thop import profile, clever_format
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import numpy as np
 
 import utils
-from model import Model
+from model import Model, VGG11, LeNet
 
 
 # train for one epoch to learn unique features
@@ -42,6 +43,35 @@ def train(net, data_loader, train_optimizer):
         train_bar.set_description('Train Epoch: [{}/{}] Loss: {:.4f}'.format(epoch, epochs, total_loss / total_num))
 
     return total_loss / total_num
+
+
+def eval(net, data_loader):
+    net.train()
+    losses, train_bar = [], tqdm(data_loader)
+    for pos_1, pos_2, target in train_bar:
+        pos_1, pos_2 = pos_1.cuda(non_blocking=True), pos_2.cuda(non_blocking=True)
+        feature_1, out_1 = net(pos_1)
+        feature_2, out_2 = net(pos_2)
+        # [2*B, D]
+        out = torch.cat([out_1, out_2], dim=0)
+        # [2*B, 2*B]
+        sim_matrix = torch.exp(torch.mm(out, out.t().contiguous()) / temperature)
+        mask = (torch.ones_like(sim_matrix) - torch.eye(2 * batch_size, device=sim_matrix.device)).bool()
+        # [2*B, 2*B-1]
+        sim_matrix = sim_matrix.masked_select(mask).view(2 * batch_size, -1)
+
+        # compute loss
+        pos_sim = torch.exp(torch.sum(out_1 * out_2, dim=-1) / temperature)
+        # [2*B]
+        pos_sim = torch.cat([pos_sim, pos_sim], dim=0)
+        loss = (- torch.log(pos_sim / sim_matrix.sum(dim=-1)))
+
+        losses += [loss.cpu().detach().numpy()]
+        #train_bar.set_description('Eval Epoch: [{}/{}] Loss: {:.4f}'.format(epoch, epochs, total_loss / total_num))
+
+    losses = np.concatenate(losses)
+   
+    return (np.mean(losses), np.min(losses), np.max(losses))
 
 
 # test for one epoch, use weighted knn to find the most similar images' label to assign the test image
@@ -103,16 +133,35 @@ if __name__ == '__main__':
     batch_size, epochs = args.batch_size, args.epochs
 
     # data prepare
+
+    #train_data = utils.MNISTPair(root=args.DATA_PATH+"MNIST", train=True, transform=utils.train_transform, download=True)
+    #train_data = utils.EMNISTPair(root=args.DATA_PATH+"EMINST", split="byclass", transform=utils.train_transform_mnist, download=True)
+    #train_data = utils.CIFAR10Pair(root=args.DATA_PATH+"CIFAR10", train=True, transform=utils.train_transform_mnist, download=True)
     train_data = utils.STL10Pair(root=args.DATA_PATH+"STL10", split="unlabeled", transform=utils.train_transform, download=True)
+    #train_data = utils.SVHNPair(root=args.DATA_PATH+"SVHN", split="train", transform=utils.train_transform, download=True)
+    #train_data = utils.CIFAR10_class_Pair(root=args.DATA_PATH+"CIFAR10", train=True, transform=utils.train_transform, download=True, client_class=0)
+    
+    #memory_data = utils.MNISTPair(root=args.DATA_PATH+"MNIST", train=True, transform=utils.train_transform, download=True)
+    memory_data = utils.CIFAR10Pair(root=args.DATA_PATH+"CIFAR10", train=True, transform=utils.train_transform, download=True)
+    #memory_data = utils.MNISTPair(root=args.DATA_PATH+"MNIST", train=True, transform=utils.train_transform, download=True)
+
+
+    #test_data = utils.MNISTPair(root=args.DATA_PATH+"MNIST", train=False, transform=utils.train_transform, download=True)
+    test_data = utils.CIFAR10Pair(root=args.DATA_PATH+"CIFAR10", train=False, transform=utils.test_transform, download=True)
+    #test_data = utils.MNISTPair(root=args.DATA_PATH+"MNIST", train=False, transform=utils.test_transform, download=True)
+
+
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True,
                               drop_last=True)
-    memory_data = utils.CIFAR10Pair(root=args.DATA_PATH+"CIFAR10", train=True, transform=utils.train_transform, download=True)
     memory_loader = DataLoader(memory_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
-    test_data = utils.CIFAR10Pair(root=args.DATA_PATH+"CIFAR10", train=False, transform=utils.test_transform, download=True)
     test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
+    #outlier_loader = DataLoader(outlier_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True, drop_last=True)
+    #outlier_ref_loader = DataLoader(outlier_ref_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True, drop_last=True)
 
     # model setup and optimizer config
-    model = Model(feature_dim).cuda()
+    model = VGG11(feature_dim, group_norm=False).cuda()
+    #model = Model(feature_dim, group_norm=False).cuda()
+    #model = LeNet().cuda()
     flops, params = profile(model, inputs=(torch.randn(1, 3, 32, 32).cuda(),))
     flops, params = clever_format([flops, params])
     print('# Model Params: {} FLOPs: {}'.format(params, flops))
@@ -120,14 +169,17 @@ if __name__ == '__main__':
     c = len(memory_data.classes)
 
     # training loop
-    results = {'train_loss': [], 'test_acc@1': [], 'test_acc@5': []}
+    results = {'train_loss': [], 'test_acc@1': [], 'test_acc@5': [], "outlier_loss" : []}
     save_name_pre = '{}_{}_{}_{}_{}'.format(feature_dim, temperature, k, batch_size, epochs)
     if not os.path.exists('results'):
         os.mkdir('results')
     best_acc = 0.0
     for epoch in range(1, epochs + 1):
         train_loss = train(model, train_loader, optimizer)
+
+        
         results['train_loss'].append(train_loss)
+        results['outlier_loss'].append(outlier_loss)
         test_acc_1, test_acc_5 = test(model, memory_loader, test_loader)
         results['test_acc@1'].append(test_acc_1)
         results['test_acc@5'].append(test_acc_5)
