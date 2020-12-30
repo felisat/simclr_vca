@@ -10,7 +10,7 @@ from tqdm import tqdm
 import numpy as np
 
 import utils
-from model import Model, VGG11, LeNet
+from model import ResNet8, VGG11, LeNet, VGG16, LeNet2, VGG9new, MobileNetV2
 
 
 # train for one epoch to learn unique features
@@ -137,9 +137,12 @@ if __name__ == '__main__':
     #train_data = utils.MNISTPair(root=args.DATA_PATH+"MNIST", train=True, transform=utils.train_transform, download=True)
     #train_data = utils.EMNISTPair(root=args.DATA_PATH+"EMINST", split="byclass", transform=utils.train_transform_mnist, download=True)
     #train_data = utils.CIFAR10Pair(root=args.DATA_PATH+"CIFAR10", train=True, transform=utils.train_transform_mnist, download=True)
-    train_data = utils.STL10Pair(root=args.DATA_PATH+"STL10", split="unlabeled", transform=utils.train_transform, download=True)
+    #train_data = utils.STL10Pair(root=args.DATA_PATH+"STL10", split="unlabeled", transform=utils.train_transform, download=True)
     #train_data = utils.SVHNPair(root=args.DATA_PATH+"SVHN", split="train", transform=utils.train_transform, download=True)
     #train_data = utils.CIFAR10_class_Pair(root=args.DATA_PATH+"CIFAR10", train=True, transform=utils.train_transform, download=True, client_class=0)
+    train_data = utils.Imagenet32Pair(root=args.DATA_PATH+"Imagenet32", transform=utils.train_transform, subset="classes_dogs.txt")
+    #train_data = utils.CelebAPair(root=args.DATA_PATH+"CelebA", split="test", transform=utils.train_transform, download=True)
+
     
     #memory_data = utils.MNISTPair(root=args.DATA_PATH+"MNIST", train=True, transform=utils.train_transform, download=True)
     memory_data = utils.CIFAR10Pair(root=args.DATA_PATH+"CIFAR10", train=True, transform=utils.train_transform, download=True)
@@ -159,9 +162,12 @@ if __name__ == '__main__':
     #outlier_ref_loader = DataLoader(outlier_ref_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True, drop_last=True)
 
     # model setup and optimizer config
-    model = VGG11(feature_dim, group_norm=False).cuda()
-    #model = Model(feature_dim, group_norm=False).cuda()
+    #model = VGG16(feature_dim, batch_norm=True, group_norm=False).cuda()
+    model = ResNet8(feature_dim).cuda()
     #model = LeNet().cuda()
+    #model = LeNet2().cuda()
+    #model = VGG9new().cuda()
+    #model = MobileNetV2(feature_dim).cuda()
     flops, params = profile(model, inputs=(torch.randn(1, 3, 32, 32).cuda(),))
     flops, params = clever_format([flops, params])
     print('# Model Params: {} FLOPs: {}'.format(params, flops))
@@ -169,7 +175,7 @@ if __name__ == '__main__':
     c = len(memory_data.classes)
 
     # training loop
-    results = {'train_loss': [], 'test_acc@1': [], 'test_acc@5': [], "outlier_loss" : []}
+    results = {'train_loss': [], 'test_acc@1': [], 'test_acc@5': []}
     save_name_pre = '{}_{}_{}_{}_{}'.format(feature_dim, temperature, k, batch_size, epochs)
     if not os.path.exists('results'):
         os.mkdir('results')
@@ -179,13 +185,12 @@ if __name__ == '__main__':
 
         
         results['train_loss'].append(train_loss)
-        results['outlier_loss'].append(outlier_loss)
         test_acc_1, test_acc_5 = test(model, memory_loader, test_loader)
         results['test_acc@1'].append(test_acc_1)
         results['test_acc@5'].append(test_acc_5)
         # save statistics
         data_frame = pd.DataFrame(data=results, index=range(1, epoch + 1))
-        data_frame.to_csv('results/{}_statistics.csv'.format(save_name_pre), index_label='epoch')
+        data_frame.to_csv('results/{}_statistics_vgg.csv'.format(save_name_pre), index_label='epoch')
         if test_acc_1 > best_acc:
             best_acc = test_acc_1
-            torch.save(model.state_dict(), 'results/{}_model.pth'.format(save_name_pre))
+            torch.save(model.state_dict(), 'results/{}_model_vgg.pth'.format(save_name_pre))
