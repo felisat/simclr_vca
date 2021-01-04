@@ -140,7 +140,7 @@ if __name__ == '__main__':
     #train_data = utils.STL10Pair(root=args.DATA_PATH+"STL10", split="unlabeled", transform=utils.train_transform, download=True)
     #train_data = utils.SVHNPair(root=args.DATA_PATH+"SVHN", split="train", transform=utils.train_transform, download=True)
     #train_data = utils.CIFAR10_class_Pair(root=args.DATA_PATH+"CIFAR10", train=True, transform=utils.train_transform, download=True, client_class=0)
-    train_data = utils.Imagenet32Pair(root=args.DATA_PATH+"Imagenet32", transform=utils.train_transform, subset="classes_dogs.txt")
+    train_data = utils.Imagenet32Pair(root=args.DATA_PATH+"Imagenet32", transform=utils.train_transform, subset="classes_mammals.txt")
     #train_data = utils.CelebAPair(root=args.DATA_PATH+"CelebA", split="test", transform=utils.train_transform, download=True)
 
     
